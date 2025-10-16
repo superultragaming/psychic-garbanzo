@@ -1,1 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Terrandia</title>
+  <link rel="icon" type="image/x-icon" href="https://raw.githubusercontent.com/Skaberson/test123/main/images/icon2.png">
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #222;}
+    #inventoryPanel {
+      position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+      background: rgba(16,16,24,0.97); color: #fff; font-family: monospace;
+      border: 2px solid #fffd7f; border-radius: 8px; min-width: 270px;
+      padding: 18px 30px 18px 30px; z-index: 10; display: none;
+      box-shadow: 0 8px 32px #000a;
+    }
+    #inventoryPanel h2 { margin: 0 0 10px 0; font-size: 18px; text-align: center;}
+    #inventoryItems { font-size: 16px; letter-spacing: 1px;}
+    #hotbar {
+      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; z-index: 5; pointer-events: none;
+    }
+    .hotbar-slot {
+      width: 38px; height: 38px; border-radius: 7px; border: 2.3px solid #888;
+      background: #222c; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: monospace; font-size: 13px; font-weight: bold; color: #fff; 
+      position: relative; transition: border 0.1s, background 0.1s;
+      user-select: none;
+    }
+    .hotbar-slot.selected { border: 2.8px solid #fffd7f; background: #242d; }
+    .hotbar-slot .slot-key {
+      position: absolute; top: 1px; right: 2px; font-size: 10px; color: #fff7a7; opacity: 0.65;
+    }
+    .hotbar-slot .slot-count {
+      position: absolute; bottom: 2px; right: 4px; font-size: 11px; color: #fff;
+      text-shadow: 0 0 2px #000,0 0 4px #000;
+      font-weight: normal;
+    }
+    .hotbar-slot .slot-swatch {
+      width: 18px; height: 18px; border-radius: 3px; margin-top: 7px;
+      border: 1.2px solid #888;
+      margin-bottom: 3px;
+      box-sizing: border-box;
+    }
+    #instructions { font-size: 13px; margin-top: 10px; display: none !important;}
+    #ui { display: none !important;}
+    canvas { display: block; background: #223366; }
+  </style>
+</head>
+<body>
+  <div id="inventoryPanel">
+    <h2>Inventory <span style="font-size:12px;opacity:.6">(press I to close)</span></h2>
+    <div id="inventoryItems"></div>
+  </div>
+  <div id="hotbar"></div>
+  <canvas id="game" tabindex="0"></canvas>
+  <script>
+    // --- Config ---
+    const BLOCK_SIZE = 24;
+    const BLOCK_SCALE = 1.03;
+    const CAMERA_WIDTH = 16;
+    const CAMERA_HEIGHT = 9;
+    const GROUND_LEVEL = 10;
+    const GRAVITY = 0.4;
+    const JUMP_VEL = 7;
+    const MOVE_SPEED = 3.2;
+    const TICK = 1/60;
+    const CHUNK_SIZE = 32;
+    const MINE_REACH = 5;
 
+    // --- Block colors (fallback) ---
+    const COLORS = {
+      air: "#223366",
+      grass: "#3cbb3c",
+      dirt: "#87692b",
+      stone: "#888",
+      sand: "#e8e2aa",
+      clay: "#b97a56",
+      snow: "#e0e8f0",
+      hotstone: "#c75d35",
+      magma: "#f85a0a",
+      lava: "#ff4100",
+      leaf: "#5ed04b",
+      wood: "#7c4f20",
+      brick: "#a64832",
+      ore: "#e4e45c",
+      player: "#fff1c1",
+      select: "#fffd7f",
+      cloud: "#e3eaff",
+      hellstone: "#6c162b"
+    };
+
+    // The order & allowed block types for the hotbar.
+    const HOTBAR_BLOCKS = [
+      "dirt", "stone", "sand", "clay", "snow", "hotstone", "magma", "wood", "brick", "cloud"
+    ];
+
+    // --- Block images (edit these for custom textures!) ---
+    const BLOCK_IMAGES = {
+      grass: "https://raw.githubusercontent.com/Skaberson/test123/main/images/grass.png",
+      dirt: "https://raw.githubusercontent.com/Skaberson/test123/main/images/dirt_00.png",
+      stone: "https://raw.githubusercontent.com/Skaberson/test123/main/images/stone.png",
+      sand: "https://raw.githubusercontent.com/Skaberson/test123/main/images/newsand.png",
+      clay: "https://raw.githubusercontent.com/Skaberson/test123/main/images/clay.png",
+      snow: "https://raw.githubusercontent.com/Skaberson/test123/main/images/newsnow.png",
+      hotstone: "https://raw.githubusercontent.com/Skaberson/test123/main/images/hotstone.png",
+      magma: "",
+      lava: "",
+      leaf: "https://raw.githubusercontent.com/Skaberson/test123/main/images/leaves_00.png",
+      wood: "https://raw.githubusercontent.com/Skaberson/test123/main/images/wood_0.png",
+      brick: "",
+      ore: "",
+      cloud: "https://raw.githubusercontent.com/Skaberson/test123/main/images/cloud.png",
+      hellstone: ""
+    };
+
+    // --- Preload images and track status ---
+    const imageCache = {};
+    for (const [type, url] of Object.entries(BLOCK_IMAGES)) {
+      if (url) {
+        const img = new window.Image();
+        img.src = url;
+        imageCache[type] = {
+          img,
+          loaded: false,
+          error: false
+        };
+        img.onload = () => { imageCache[type].loaded = true; };
+        img.onerror = () => { imageCache[type].error = true; };
+      }
+    }
+
+    // --- PRNG and Noise ---
+    function mulberry32(a) {
+      return function() {
+        var t = a += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      }
+    }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function smoothstep(t) { return t * t * (3 - 2 * t); }
+    function valueNoise(x, seed) {
+      let rnd = mulberry32(seed + x*73856093);
+      return rnd();
+    }
+    function perlin1d(x, seed) {
+      let xi = Math.floor(x);
+      let xf = x - xi;
+      let l = valueNoise(xi, seed), r = valueNoise(xi+1, seed);
+      return lerp(l, r, smoothstep(xf));
+    }
+
+    // --- Biomes ---
+    function getBiome(x) {
+      const bseed = 234567;
+      const n = perlin1d(x / 64, bseed * 13);
+      if (n < 0.25) {
+        return { name: "desert", surface: "sand", dirt: "sand", stone: "stone", tree: null };
+      } else if (n < 0.48) {
+        return { name: "snow", surface: "snow", dirt: "snow", stone: "stone", tree: null };
+      } else if (n < 0.75) {
+        return { name: "forest", surface: "grass", dirt: "dirt", stone: "stone", tree: "oak" };
+      } else {
+        return { name: "clay", surface: "clay", dirt: "clay", stone: "stone", tree: null };
+      }
+    }
+
+    // --- Infinite World Storage ---
+    let world = {};
+    const seed = 53758;
+    function getBlock(x, y) {
+      const key = x + "," + y;
+      if(world.hasOwnProperty(key)) return world[key];
+      return null;
+    }
+    function setBlock(x, y, type) {
+      world[x+','+y] = type;
+    }
+
+    // --- Terraria-style cave generation: more common, but not right under surface ---
+    function cave2D(x, y, biome, surf) {
+      if (y <= surf + 70) return false; // Never above y = surface+5
+      let caveNoise = perlin1d(x/8 + y/16, 777+biome.name.length)*0.6
+                    + perlin1d(x/18 - y/25, 888-biome.name.length)*0.4;
+      let tunnelNoise = perlin1d(x/13 + y/45, 999)*0.7
+                      + perlin1d(x/52 - y/55, 333)*0.3;
+      let depth = y-surf-6;
+      let caveProb = 0.71 + Math.min(0.18, depth/80);
+      let tunnelProb = 0.85 + Math.min(0.12, depth/200);
+      return (caveNoise > caveProb) || (tunnelNoise > tunnelProb);
+    }
+
+    // --- Sky Islands Helper ---
+    function generateSkyIsland(x, y) {
+      let islandRadiusX = 4 + Math.floor(valueNoise(x*2, seed)*3); // width 4-7
+      let islandRadiusY = 2 + Math.floor(valueNoise(x*3, seed)*2); // height 2-3
+      let hasGrass = valueNoise(x*4, seed) > 0.5;
+      for (let ix = -islandRadiusX; ix <= islandRadiusX; ix++) {
+        for (let iy = -islandRadiusY; iy <= islandRadiusY; iy++) {
+          // Ellipse equation
+          if ((ix*ix)/(islandRadiusX*islandRadiusX) + (iy*iy)/(islandRadiusY*islandRadiusY) <= 1) {
+            setBlock(x+ix, y+iy, "cloud");
+            // Optionally, grass or dirt on top
+            if (iy === -islandRadiusY && hasGrass && Math.abs(ix) <= islandRadiusX-1) {
+              setBlock(x+ix, y+iy-1, valueNoise(x+ix, seed*7) > 0.5 ? "grass" : "dirt");
+            }
+          }
+        }
+      }
+    }
+
+    function generateChunk(cx, cy) {
+      for(let dx=0; dx<CHUNK_SIZE; dx++) {
+        let x = cx * CHUNK_SIZE + dx;
+        const biome = getBiome(x);
+        let h = Math.floor(GROUND_LEVEL + perlin1d(x/8, seed)*7 + perlin1d(x/2, seed*2)*3 + perlin1d(x/18, seed*biome.name.length)*2);
+
+        // --- SKY ISLANDS ---
+        // Only generate in chunks that cover the "sky island" band
+        let skyY = h - 100;
+        if (cy === Math.floor(skyY / CHUNK_SIZE)) {
+          // 1.5% chance per chunk column for an island
+          if (valueNoise(x, 99999) > 0.985) {
+            let islandY = skyY + Math.floor(valueNoise(x*11, seed)*8) - 3;
+            generateSkyIsland(x, islandY);
+          }
+        }
+
+        for(let dy=0; dy<CHUNK_SIZE; dy++) {
+          let y = cy * CHUNK_SIZE + dy;
+          let key = x + "," + y;
+          if(world.hasOwnProperty(key)) continue;
+          let type = "air";
+          let temp = 0.0 + y*0.008;
+          let stoneType = "stone";
+          if (temp > 2.5) stoneType = "hotstone";
+          if (temp > 5.5) stoneType = "magma";
+          if (temp > 8.5) stoneType = "lava";
+          // --- UNDERWORLD ---
+          if (y > h + 200) {
+            // Underworld zone: hellstone and lava pockets
+            if (valueNoise(x + y*13, seed*3) > 0.92) {
+              type = "lava";
+            } else {
+              type = "hellstone";
+            }
+          }
+          else if(y < h) type = 'air';
+          else if(y == h) type = biome.surface;
+          else if(y < h+3) type = biome.dirt;
+          else type = stoneType;
+          if (y > h+1 && type !== 'air' && cave2D(x, y, biome, h)) type = 'air';
+          if((type === "stone" || type === "hotstone" || type==="magma") && valueNoise(x + y*31, seed*4) > 0.995) type = "ore";
+          if (y === h && valueNoise(Math.floor(x/8), 3333) < 0.025) {
+            for (let sx = -2; sx <= 2; sx++) for (let sy = 0; sy < 4; sy++) {
+              let wx = x + sx, wy = y - sy;
+              if (sy === 0) setBlock(wx, wy, "brick");
+              else if (sy === 3) setBlock(wx, wy, "leaf");
+              else if (sx === -2 || sx === 2) setBlock(wx, wy, "wood");
+              else setBlock(wx, wy, "air"); 
+            }
+            setBlock(x, y-1, "air");
+          }
+          if(biome.tree && y === h && valueNoise(x, 555) > 0.94) {
+            setBlock(x, y-1, "wood"); setBlock(x, y-2, "wood");
+            setBlock(x, y-3, "leaf");
+            setBlock(x-1, y-3, "leaf"); setBlock(x+1, y-3, "leaf");
+            setBlock(x, y-4, "leaf");
+          }
+          world[key] = type;
+        }
+      }
+    }
+
+    function ensureWorldGenerated(camX, camY) {
+      let left = Math.floor(camX - CAMERA_WIDTH/2);
+      let top = Math.floor(camY - CAMERA_HEIGHT/2);
+      let right = left + CAMERA_WIDTH + 2;
+      let bottom = top + CAMERA_HEIGHT + 2;
+      let min_cx = Math.floor(left / CHUNK_SIZE);
+      let max_cx = Math.floor(right / CHUNK_SIZE);
+      let min_cy = Math.floor(top / CHUNK_SIZE);
+      let max_cy = Math.floor(bottom / CHUNK_SIZE);
+      for(let cx=min_cx; cx<=max_cx; cx++) {
+        for(let cy=min_cy; cy<=max_cy; cy++) {
+          let probeX = cx*CHUNK_SIZE, probeY = cy*CHUNK_SIZE;
+          if(getBlock(probeX, probeY) === null) {
+            generateChunk(cx, cy);
+          }
+        }
+      }
+    }
+
+    // --- Canvas Setup ---
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    function resizeCanvas() {
+      const DPR = window.devicePixelRatio || 1;
+      const minWidthScale  = Math.floor(window.innerWidth  / (CAMERA_WIDTH  * BLOCK_SIZE)) || 1;
+      const minHeightScale = Math.floor(window.innerHeight / (CAMERA_HEIGHT * BLOCK_SIZE)) || 1;
+      RENDER_SCALE = Math.max(1, Math.min(minWidthScale, minHeightScale));
+      const cssWidth  = CAMERA_WIDTH  * BLOCK_SIZE * RENDER_SCALE;
+      const cssHeight = CAMERA_HEIGHT * BLOCK_SIZE * RENDER_SCALE;
+      canvas.style.width  = cssWidth + "px";
+      canvas.style.height = cssHeight + "px";
+      canvas.width  = Math.floor(cssWidth * DPR);
+      canvas.height = Math.floor(cssHeight * DPR);
+      ctx.setTransform(DPR * RENDER_SCALE, 0, 0, DPR * RENDER_SCALE, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.imageSmoothingQuality = "low";
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // --- Player ---
+    let player = {
+      x: 0,
+      y: 0,
+      w: 0.7,
+      h: 0.95,
+      vx: 0, vy: 0,
+      onGround: false,
+      canJump: true,
+      miningCooldown: 0
+    };
+
+    function findGroundStartX(x) {
+      for(let y=-CAMERA_HEIGHT; y<100; y++) {
+        let t = getBlock(x, y);
+        if(t === null) {
+          let cx = Math.floor(x/CHUNK_SIZE), cy = Math.floor(y/CHUNK_SIZE);
+          generateChunk(cx, cy);
+          t = getBlock(x, y);
+        }
+        if(t !== "air") return y-1;
+      }
+      return 0;
+    }
+    player.x = 0;
+    player.y = findGroundStartX(0);
+
+    // --- Camera ---
+    let camera = {
+      x: player.x,
+      y: player.y
+    };
+
+    // --- Inventory logic ---
+    let inventory = {};
+    for(const k of HOTBAR_BLOCKS) inventory[k]=10;
+    function addToInventory(blockType, amt=1) {
+      if (!inventory.hasOwnProperty(blockType)) inventory[blockType] = 0;
+      inventory[blockType] += amt;
+      updateHotbar();
+    }
+    function showInventory() {
+      const invDiv = document.getElementById('inventoryPanel');
+      invDiv.style.display = "block";
+      updateInventoryDisplay();
+    }
+    function hideInventory() {
+      document.getElementById('inventoryPanel').style.display = "none";
+    }
+    function updateInventoryDisplay() {
+      const itemsDiv = document.getElementById('inventoryItems');
+      let out = "";
+      let hasAny = false;
+      for(const k in inventory) {
+        if(inventory[k] > 0) {
+          out += `<span style="color:${COLORS[k]||'#fff'}">${k}</span>: <b>${inventory[k]}</b><br>`;
+          hasAny = true;
+        }
+      }
+      if(!hasAny) out = "<i>(empty)</i>";
+      itemsDiv.innerHTML = out;
+    }
+    let inventoryOpen = false;
+
+    // --- Terraria-style mining reach check ---
+    function isInReach(x, y) {
+      let px = player.x;
+      let py = player.y + player.h/2;
+      let dist = Math.sqrt((x+0.5-px)**2 + (y+0.5-py)**2);
+      return dist <= MINE_REACH;
+    }
+
+    // --- Hotbar UI ---
+    let hotbarSelected = 0;
+    function updateHotbar() {
+      const hotbar = document.getElementById('hotbar');
+      hotbar.innerHTML = "";
+      for(let i=0;i<HOTBAR_BLOCKS.length;i++) {
+        const block = HOTBAR_BLOCKS[i];
+        const slot = document.createElement('div');
+        slot.className = "hotbar-slot" + (i===hotbarSelected?" selected":"");
+        slot.innerHTML = `
+          <div class="slot-key">${i+1}</div>
+          <div class="slot-swatch" style="background:${COLORS[block]}"></div>
+          <span>${block}</span>
+          <span class="slot-count">${inventory[block]||0}</span>
+        `;
+        slot.onclick = ()=>{ hotbarSelected = i; updateHotbar(); };
+        hotbar.appendChild(slot);
+      }
+    }
+    updateHotbar();
+
+    // --- Mining ---
+    let minedBlocks = 0;
+    let mouseTile = null;
+    let mouseDown = false, mouseRight = false;
+    let mouseTileRefresh = {x: 0, y: 0};
+    let mouseTileLast = {x: 0, y: 0};
+    let mouseTileTimer = 0;
+
+    function getMouseTile(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      const mx_css = clientX - rect.left;
+      const my_css = clientY - rect.top;
+      const mx = Math.floor(mx_css / (BLOCK_SIZE * RENDER_SCALE));
+      const my = Math.floor(my_css / (BLOCK_SIZE * RENDER_SCALE));
+      const cx = Math.floor(camera.x - CAMERA_WIDTH / 2 + mx);
+      const cy = Math.floor(camera.y - CAMERA_HEIGHT / 2 + my);
+      return { x: cx, y: cy };
+    }
+    canvas.addEventListener('mousemove', (e)=>{
+      mouseTile = getMouseTile(e.clientX, e.clientY);
+      mouseTileRefresh = mouseTile;
+      mouseTileTimer = 0;
+    });
+    canvas.addEventListener('mouseleave', ()=>{ mouseTile = null; });
+    canvas.addEventListener('mousedown', (e)=>{
+      if (inventoryOpen) return;
+      mouseDown = true;
+      mouseRight = e.button === 2;
+      attemptMineOrPlace();
+      canvas.focus();
+    });
+    canvas.addEventListener('mouseup', ()=>{ mouseDown = false; });
+    canvas.addEventListener('contextmenu', e=>e.preventDefault());
+
+    function periodicMouseTileRefresh() {
+      mouseTileTimer += 1;
+      if (mouseTile && (mouseTile.x !== mouseTileLast.x || mouseTile.y !== mouseTileLast.y)) {
+        mouseTileRefresh = { ...mouseTile };
+        mouseTileLast = { ...mouseTile };
+        mouseTileTimer = 0;
+      } else if (mouseTile && mouseTileTimer >= 60) {
+        let rect = canvas.getBoundingClientRect();
+        let mx = ((mouseTile.x + CAMERA_WIDTH/2 - camera.x) * BLOCK_SIZE) * (rect.width / canvas.width) + rect.left + 0.1;
+        let my = ((mouseTile.y + CAMERA_HEIGHT/2 - camera.y) * BLOCK_SIZE) * (rect.height / canvas.height) + rect.top + 0.1;
+        mouseTileRefresh = getMouseTile(mx, my);
+        mouseTileTimer = 0;
+      }
+    }
+
+    function attemptMineOrPlace() {
+      if(!mouseTileRefresh) return;
+      let {x, y} = mouseTileRefresh;
+      if (!isInReach(x, y)) return;
+      let t = getBlock(x, y);
+      let placeBlock = HOTBAR_BLOCKS[hotbarSelected];
+      if(mouseRight) {
+        if(t === 'air' && (inventory[placeBlock]||0)>0) {
+          for(let [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            let nx = x+dx, ny = y+dy;
+            let nt = getBlock(nx, ny);
+            if(nt && nt != 'air') {
+              setBlock(x, y, placeBlock);
+              inventory[placeBlock]--;
+              updateHotbar();
+              updateInventoryDisplay();
+              break;
+            }
+          }
+        }
+      } else {
+        if(t && t !== 'air') {
+          setBlock(x, y, 'air');
+          minedBlocks++;
+          addToInventory(t, 1);
+          updateHotbar();
+          updateInventoryDisplay();
+        }
+      }
+    }
+
+    // --- Controls ---
+    let left = false, right = false, up = false, jumpRequest = false;
+    function handleKeydown(e) {
+      if (e.repeat) return;
+      if(e.key==='ArrowLeft' || e.key==='a' || e.key==='A') left = true;
+      if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') right = true;
+      if(e.key==='ArrowUp' || e.key==='w' || e.key==='W') {
+        up = true; jumpRequest = true;
+      }
+      if(e.key===' ' ) { up = true; jumpRequest = true; }
+      if(e.key==='f' || e.key==='F') {
+        if (!document.fullscreenElement) {
+          if(canvas.requestFullscreen) canvas.requestFullscreen();
+          else if(canvas.webkitRequestFullscreen) canvas.webkitRequestFullscreen();
+          else if(canvas.mozRequestFullScreen) canvas.mozRequestFullScreen();
+          else if(canvas.msRequestFullscreen) canvas.msRequestFullscreen();
+          setTimeout(()=>canvas.focus(), 100);
+        } else {
+          if(document.exitFullscreen) document.exitFullscreen();
+          else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+          else if(document.mozCancelFullScreen) document.mozCancelFullScreen();
+          else if(document.msExitFullscreen) document.msExitFullscreen();
+          setTimeout(()=>canvas.focus(), 100);
+        }
+      }
+      // Inventory toggle
+      if(e.key==='i' || e.key==='I') {
+        inventoryOpen = !inventoryOpen;
+        if(inventoryOpen) showInventory();
+        else hideInventory();
+      }
+      // Hotbar numbers (1-9)
+      if(/[1-9]/.test(e.key)) {
+        let idx = parseInt(e.key)-1;
+        if(idx >= 0 && idx < HOTBAR_BLOCKS.length) {
+          hotbarSelected = idx;
+          updateHotbar();
+        }
+      }
+    }
+    function handleKeyup(e) {
+      if(e.key==='ArrowLeft' || e.key==='a' || e.key==='A') left = false;
+      if(e.key==='ArrowRight' || e.key==='d' || e.key==='D') right = false;
+      if(e.key==='ArrowUp' || e.key==='w' || e.key==='W' || e.key===' ') up = false;
+    }
+    document.addEventListener('keydown', handleKeydown);
+    document.addEventListener('keyup', handleKeyup);
+
+    // --- Collision helpers ---
+    function isSolid(x, y) {
+      let t = getBlock(x, y);
+      return t && t !== 'air';
+    }
+
+    // --- Terraria-style AABB collision (X then Y, flush with all blocks, matches draw) ---
+    function collideAABB(px, py, vx, vy, w, h) {
+      let nx = px, ny = py;
+      let onGround = false;
+
+      // Move X
+      nx += vx;
+      let minY = Math.floor(ny + 1e-8), maxY = Math.floor(ny + h - 1e-8);
+      if(vx > 0) {
+        let rx = nx + w/2 - 1e-8;
+        let xBlock = Math.floor(rx);
+        for(let y = minY; y <= maxY; y++) {
+          if(isSolid(xBlock, y)) {
+            nx = xBlock - w/2;
+            break;
+          }
+        }
+      } else if(vx < 0) {
+        let lx = nx - w/2 + 1e-8;
+        let xBlock = Math.floor(lx);
+        for(let y = minY; y <= maxY; y++) {
+          if(isSolid(xBlock, y)) {
+            nx = xBlock + 1 + w/2 - 1e-8;
+            break;
+          }
+        }
+      }
+
+      // Move Y
+      ny += vy;
+      let minX = Math.floor(nx - w/2 + 1e-8), maxX = Math.floor(nx + w/2 - 1e-8);
+      if(vy > 0) {
+        let by = ny + h - 1e-8;
+        let yBlock = Math.floor(by);
+        for(let x = minX; x <= maxX; x++) {
+          if(isSolid(x, yBlock)) {
+            ny = yBlock - h;
+            onGround = true;
+            break;
+          }
+        }
+      } else if(vy < 0) {
+        let ty = ny + 1e-8;
+        let yBlock = Math.floor(ty);
+        for(let x = minX; x <= maxX; x++) {
+          if(isSolid(x, yBlock)) {
+            ny = yBlock + 1;
+            break;
+          }
+        }
+      }
+
+      return {x: nx, y: ny, onGround};
+    }
+
+    // --- Jump Physics (Smooth, always consistent height) ---
+    let jumpActive = false;
+    let jumpTimer = 0;
+    const JUMP_DURATION = 0.34;
+
+    function update() {
+      ensureWorldGenerated(camera.x, camera.y);
+
+      let targetVx = 0;
+      if(left) targetVx -= MOVE_SPEED;
+      if(right) targetVx += MOVE_SPEED;
+      player.vx += (targetVx - player.vx) * 0.25;
+
+      if(jumpRequest && player.onGround && !jumpActive) {
+        jumpActive = true;
+        jumpTimer = 0;
+      }
+      jumpRequest = false;
+
+      let vy = player.vy;
+      if(jumpActive) {
+        jumpTimer += TICK;
+        let t = jumpTimer/JUMP_DURATION;
+        if(t < 1) {
+          vy = -JUMP_VEL*(1-t);
+        } else {
+          jumpActive = false;
+        }
+      } else {
+        vy += GRAVITY;
+      }
+
+      let move = collideAABB(player.x, player.y, player.vx*TICK, vy*TICK, player.w, player.h);
+      player.x = move.x;
+      player.y = move.y;
+      player.onGround = move.onGround;
+
+      if(player.onGround) {
+        player.vy = 0;
+        jumpActive = false;
+      } else {
+        player.vy = vy;
+      }
+
+      player.y = Math.max(-CAMERA_HEIGHT, player.y);
+
+      // Camera follows player smoothly (lerp)
+      let camTargetX = player.x;
+      let camTargetY = player.y;
+      camera.x += (camTargetX - camera.x) * 0.12;
+      camera.y += (camTargetY - camera.y) * 0.12;
+
+      if(!inventoryOpen && mouseDown && player.miningCooldown <= 0) {
+        attemptMineOrPlace();
+        player.miningCooldown = 0.12;
+      }
+      if(player.miningCooldown > 0) player.miningCooldown -= TICK;
+
+      periodicMouseTileRefresh();
+    }
+
+    function draw() {
+      let camX = camera.x - CAMERA_WIDTH/2;
+      let camY = camera.y - CAMERA_HEIGHT/2;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      // Draw world blocks, at exact world position (no offset bug!)
+      let left = Math.floor(camX), top = Math.floor(camY);
+      for(let x=left; x<=left+CAMERA_WIDTH; x++) {
+        for(let y=top; y<=top+CAMERA_HEIGHT; y++) {
+          let t = getBlock(x, y);
+          if(t && t !== "air") {
+            let px = (x - camX) * BLOCK_SIZE;
+            let py = (y - camY) * BLOCK_SIZE;
+            let size = BLOCK_SIZE * BLOCK_SCALE;
+            let adjust = (size - BLOCK_SIZE) / 2;
+            if (
+              BLOCK_IMAGES[t] &&
+              imageCache[t] &&
+              imageCache[t].loaded &&
+              !imageCache[t].error
+            ) {
+              ctx.drawImage(imageCache[t].img, px - adjust, py - adjust, size, size);
+            } else {
+              ctx.fillStyle = COLORS[t] || "#ff00ff";
+              ctx.fillRect(px - adjust, py - adjust, size, size);
+            }
+          }
+        }
+      }
+
+      // Draw mining/highlight box snapped perfectly to grid, always follows mouse
+      if(mouseTileRefresh) {
+        let inReach = isInReach(mouseTileRefresh.x, mouseTileRefresh.y);
+        let px = (mouseTileRefresh.x - camX) * BLOCK_SIZE + 1;
+        let py = (mouseTileRefresh.y - camY) * BLOCK_SIZE + 1;
+        ctx.strokeStyle = inReach ? COLORS.select : "#f44";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(px, py, BLOCK_SIZE-2, BLOCK_SIZE-2);
+      }
+
+      // Draw player
+      let sx = (player.x - camX - player.w/2) * BLOCK_SIZE;
+      let sy = (player.y - camY) * BLOCK_SIZE;
+      ctx.fillStyle = COLORS.player;
+      ctx.fillRect(sx, sy, player.w*BLOCK_SIZE, player.h*BLOCK_SIZE);
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx, sy, player.w*BLOCK_SIZE, player.h*BLOCK_SIZE);
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+    loop();
+  </script>
+</body>
+</html>
