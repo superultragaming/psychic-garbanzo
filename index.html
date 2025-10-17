@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Terrandia</title>
+  <link rel="icon" type="image/x-icon" href="https://raw.githubusercontent.com/Skaberson/test123/main/images/icon2.png">
+  <style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #222;}
+    #inventoryPanel {
+      position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+      background: rgba(16,16,24,0.97); color: #fff; font-family: monospace;
+      border: 2px solid #fffd7f; border-radius: 8px; min-width: 270px;
+      padding: 18px 30px 18px 30px; z-index: 10; display: none;
+      box-shadow: 0 8px 32px #000a;
+    }
+    #inventoryPanel h2 { margin: 0 0 10px 0; font-size: 18px; text-align: center;}
+    #inventoryItems { font-size: 16px; letter-spacing: 1px;}
+    #hotbar {
+      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; z-index: 5; pointer-events: none;
+    }
+    .hotbar-slot {
+      width: 38px; height: 38px; border-radius: 7px; border: 2.3px solid #888;
+      background: #222c; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: monospace; font-size: 13px; font-weight: bold; color: #fff; 
+      position: relative; transition: border 0.1s, background 0.1s;
+      user-select: none;
+    }
+    .hotbar-slot.selected { border: 2.8px solid #fffd7f; background: #242d; }
+    .hotbar-slot .slot-key {
+      position: absolute; top: 1px; right: 2px; font-size: 10px; color: #fff7a7; opacity: 0.65;
+    }
+    .hotbar-slot .slot-count {
+      position: absolute; bottom: 2px; right: 4px; font-size: 11px; color: #fff;
+      text-shadow: 0 0 2px #000,0 0 4px #000;
+      font-weight: normal;
+    }
+    .hotbar-slot .slot-swatch {
+      width: 18px; height: 18px; border-radius: 3px; margin-top: 7px;
+      border: 1.2px solid #888;
+      margin-bottom: 3px;
+      box-sizing: border-box;
+    }
+    #inventoryOverlay {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      display: none; z-index: 30;
+      background: rgba(16,16,24,0.98); color: #fff; font-family: monospace;
+      border: 2px solid #fffd7f; border-radius: 12px; box-shadow: 0 12px 40px #000a;
+      padding: 32px 40px 32px 40px;
+      min-width: 480px;
+    }
+    #inventoryOverlay.visible { display: block; }
+    #inventoryOverlay h2 {
+      margin: 0 0 18px 0; font-size: 22px; text-align: center; letter-spacing: 1px;
+    }
+    #inventoryGrid {
+      display: grid; grid-template-columns: repeat(6, 48px); grid-gap: 12px;
+      margin-bottom: 24px;
+    }
+    .inventory-slot {
+      width: 48px; height: 48px; border-radius: 9px; border: 2.5px solid #888;
+      background: #222c; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: monospace; font-size: 14px; font-weight: bold; color: #fff; 
+      position: relative; transition: border 0.1s, background 0.1s;
+      user-select: none; cursor: pointer;
+    }
+    .inventory-slot.dragging { border: 2.5px solid #fffd7f; background: #444c; }
+    .slot-count {
+      position: absolute; bottom: 2px; right: 4px; font-size: 12px; color: #fff;
+      text-shadow: 0 0 2px #000,0 0 4px #000;
+      font-weight: normal;
+    }
+    .slot-swatch {
+      width: 24px; height: 24px; border-radius: 4px; margin-top: 8px;
+      border: 1.5px solid #888;
+      margin-bottom: 3px;
+      box-sizing: border-box;
+    }
+    #inventoryHotbar {
+      display: flex; gap: 8px; margin: 0 auto; justify-content: center; margin-bottom: 14px;
+    }
+    .inventory-hotbar-slot {
+      width: 38px; height: 38px; border-radius: 7px; border: 2.3px solid #888;
+      background: #222c; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: monospace; font-size: 13px; font-weight: bold; color: #fff; 
+      position: relative; transition: border 0.1s, background 0.1s;
+      user-select: none; cursor: pointer;
+    }
+    .inventory-hotbar-slot.dragging { border: 2.8px solid #fffd7f; background: #444c;}
+    .inventory-hotbar-slot.selected { border: 2.8px solid #fffd7f; background: #242d; }
+    canvas { display: block; background: #223366; }
+  </style>
+</head>
+<body>
+  <div id="inventoryPanel">
+    <h2>Inventory <span style="font-size:12px;opacity:.6">(press I to close)</span></h2>
+    <div id="inventoryItems"></div>
+  </div>
+  <div id="hotbar"></div>
+  <div id="inventoryOverlay">
+    <h2>Inventory <span style="font-size:14px;opacity:.7">(press I to close)</span></h2>
+    <div id="inventoryHotbar"></div>
+    <div id="inventoryGrid"></div>
+  </div>
+  <canvas id="game" tabindex="0"></canvas>
+  <script src=script.js>
+  </script>
+</body>
+</html>
